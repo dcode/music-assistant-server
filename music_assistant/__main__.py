@@ -73,6 +73,13 @@ def get_arguments() -> argparse.Namespace:
         "default=info, possible=(critical, error, warning, info, debug, verbose)",
     )
     parser.add_argument(
+        "--custom-providers-dir",
+        metavar="path_to_custom_providers_dir",
+        default=None,
+        help="Directory with custom (external) providers "
+        "[default: $MASS_CUSTOM_PROVIDERS_DIR or <data dir>/custom_providers]",
+    )
+    parser.add_argument(
         "--safe-mode",
         action=argparse.BooleanOptionalAction,
         help="Start in safe mode (core controllers only, no providers)",
@@ -260,7 +267,7 @@ def main() -> None:
         except (ValueError, OSError) as err:
             LOGGER.warning("Could not raise open-file limit: %s", err)
 
-    mass = MusicAssistant(data_dir, cache_dir, safe_mode)
+    mass = MusicAssistant(data_dir, cache_dir, safe_mode, args.custom_providers_dir)
 
     # enable alpine subprocess workaround
     _enable_posix_spawn()

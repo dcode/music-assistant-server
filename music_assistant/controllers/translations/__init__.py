@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from music_assistant_models.helpers import create_safe_string
 
 from music_assistant.helpers.api import api_command
+from music_assistant.helpers.custom_providers import load_provider_strings
 from music_assistant.helpers.json import load_json_dict
 from music_assistant.models.core_controller import CORE_DOCS_URL, CoreController
 
@@ -76,11 +77,33 @@ class TranslationController(CoreController):
         self._locale_files = await asyncio.to_thread(_discover_locale_files)
         self._available_locales = {SOURCE_LANGUAGE, *self._locale_files}
         self._source = await self._load_flat(SOURCE_FILE)
+        await self._merge_custom_provider_strings()
         self.logger.debug(
             "Loaded %s source strings across %s locale(s)",
             len(self._source),
             len(self._available_locales),
         )
+
+    async def _merge_custom_provider_strings(self) -> None:
+        """
+        Add the English strings of custom providers to the source catalog.
+
+        Built-in provider strings are compiled into translations/en.json at build time;
+        custom providers live outside the package, so their strings.json is read here.
+        Existing keys are never overwritten.
+        """
+        # tolerate a controller without (a full) server, as built in isolated tests
+        custom_provider_paths = getattr(getattr(self, "mass", None), "custom_provider_paths", None)
+        if not isinstance(custom_provider_paths, dict):
+            return
+        for domain, path in custom_provider_paths.items():
+            try:
+                strings = await asyncio.to_thread(load_provider_strings, path, domain)
+            except (OSError, ValueError) as err:
+                self.logger.warning("Ignoring strings.json of custom provider %s: %s", domain, err)
+                continue
+            for key, value in strings.items():
+                self._source.setdefault(key, value)
 
     def get_translation(
         self,

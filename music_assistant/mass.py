@@ -80,6 +80,11 @@ from music_assistant.controllers.webserver.helpers.auth_middleware import get_cu
 from music_assistant.helpers.aiohttp_client import create_clientsession
 from music_assistant.helpers.api import APICommandHandler, api_command
 from music_assistant.helpers.build_info import get_official_build_info
+from music_assistant.helpers.custom_providers import (
+    discover_custom_providers,
+    register_custom_providers_path,
+    resolve_custom_providers_path,
+)
 from music_assistant.helpers.diagnostics import install_diagnostics_log_handler
 from music_assistant.helpers.images import detect_provider_icons
 from music_assistant.helpers.provider_access import visible_music_sources
@@ -236,11 +241,30 @@ class MusicAssistant:
     dashboard: DashboardController
     storage: StorageController
 
-    def __init__(self, storage_path: str, cache_path: str, safe_mode: bool = False) -> None:
-        """Initialize the MusicAssistant Server."""
+    def __init__(
+        self,
+        storage_path: str,
+        cache_path: str,
+        safe_mode: bool = False,
+        custom_providers_path: str | None = None,
+    ) -> None:
+        """
+        Initialize the MusicAssistant Server.
+
+        :param storage_path: Directory for persistent data.
+        :param cache_path: Directory for cache data.
+        :param safe_mode: Start without loading any providers.
+        :param custom_providers_path: Directory with custom (external) providers; defaults
+            to MASS_CUSTOM_PROVIDERS_DIR or ``<storage_path>/custom_providers``.
+        """
         self._state = CoreState.STARTING
         self.storage_path = storage_path
         self.cache_path = cache_path
+        self.custom_providers_path = resolve_custom_providers_path(
+            storage_path, custom_providers_path
+        )
+        # domain -> folder of each custom provider that passed discovery
+        self.custom_provider_paths: dict[str, str] = {}
         # Sqlite spills temp files (sort scratch, the VACUUM rebuild copy) to /tmp by
         # default, which is a RAM-backed tmpfs on HAOS - redirect to the data volume.
         os.environ.setdefault("SQLITE_TMPDIR", storage_path)
@@ -1622,7 +1646,53 @@ class MusicAssistant:
                 if not await isdir(dir_path):
                     continue
                 tg.create_task(load_provider_manifest(dir_str, dir_path))
+        await self.__load_custom_provider_manifests(load_provider_manifest)
         self.logger.debug("Loaded %s provider manifests", len(self._provider_manifests))
+
+    async def __load_custom_provider_manifests(
+        self, load_provider_manifest: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        """
+        Discover custom providers and load their manifests like built-in ones.
+
+        :param load_provider_manifest: The manifest loader used for built-in providers.
+        """
+        if self.safe_mode:
+            # a broken custom provider must never prevent recovering through safe mode
+            return
+        builtin_domains = {
+            name
+            for name in await asyncio.to_thread(os.listdir, PROVIDERS_PATH)  # noqa: PTH208, RUF100
+            if not name.startswith(".")
+        }
+        accepted, rejected = await asyncio.to_thread(
+            discover_custom_providers,
+            self.custom_providers_path,
+            builtin_domains,
+            self.dev_mode,
+        )
+        for rejected_dir in rejected:
+            self.logger.error(
+                "Not loading custom provider %s (%s): %s",
+                rejected_dir.name,
+                rejected_dir.path,
+                rejected_dir.reason,
+            )
+        if not accepted:
+            return
+        register_custom_providers_path(self.custom_providers_path)
+        for provider_dir in accepted:
+            await load_provider_manifest(provider_dir.domain, provider_dir.path)
+            if provider_dir.domain not in self._provider_manifests:
+                # the manifest failed to parse; load_provider_manifest already logged why
+                continue
+            self.custom_provider_paths[provider_dir.domain] = provider_dir.path
+            self.logger.warning(
+                "Loaded custom provider %s from %s. Custom providers are not tested by "
+                "Music Assistant; disable it if you experience issues.",
+                provider_dir.domain,
+                provider_dir.path,
+            )
 
     async def _update_available_providers_cache(self) -> None:
         """Update the global cache variable of loaded/available providers."""
