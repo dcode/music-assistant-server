@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import sys
 
 import pytest
 
@@ -14,7 +15,7 @@ from tests.conftest import full_mass_context
 
 DOMAIN = "zz_custom_demo"
 
-MANIFEST = {
+MANIFEST: dict[str, object] = {
     "type": "plugin",
     "domain": DOMAIN,
     "name": "Custom Demo",
@@ -68,7 +69,8 @@ async def test_custom_provider_is_discovered(
         assert "builtin" not in mass.custom_provider_paths
         assert manifests["builtin"].name != "Custom Demo"
         # importable through the regular provider import path
-        module = await load_provider_module(DOMAIN, [])
+        await load_provider_module(DOMAIN, [])
+        module = sys.modules[f"music_assistant.providers.{DOMAIN}"]
         assert module.__file__ == str(custom_dir / DOMAIN / "__init__.py")
         # its strings were merged into the translation catalog
         assert mass.translations.get_translation(f"provider.{DOMAIN}.settings.hello.label") == "Hi"

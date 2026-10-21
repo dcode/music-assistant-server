@@ -84,27 +84,6 @@ class TranslationController(CoreController):
             len(self._available_locales),
         )
 
-    async def _merge_custom_provider_strings(self) -> None:
-        """
-        Add the English strings of custom providers to the source catalog.
-
-        Built-in provider strings are compiled into translations/en.json at build time;
-        custom providers live outside the package, so their strings.json is read here.
-        Existing keys are never overwritten.
-        """
-        # tolerate a controller without (a full) server, as built in isolated tests
-        custom_provider_paths = getattr(getattr(self, "mass", None), "custom_provider_paths", None)
-        if not isinstance(custom_provider_paths, dict):
-            return
-        for domain, path in custom_provider_paths.items():
-            try:
-                strings = await asyncio.to_thread(load_provider_strings, path, domain)
-            except (OSError, ValueError) as err:
-                self.logger.warning("Ignoring strings.json of custom provider %s: %s", domain, err)
-                continue
-            for key, value in strings.items():
-                self._source.setdefault(key, value)
-
     def get_translation(
         self,
         key: str,
@@ -215,6 +194,27 @@ class TranslationController(CoreController):
             self.logger.warning("Failed to load translations file %s: %s", path, err)
             return {}
         return {key: value for key, value in data.items() if isinstance(value, str)}
+
+    async def _merge_custom_provider_strings(self) -> None:
+        """
+        Add the English strings of custom providers to the source catalog.
+
+        Built-in provider strings are compiled into translations/en.json at build time;
+        custom providers live outside the package, so their strings.json is read here.
+        Existing keys are never overwritten.
+        """
+        # tolerate a controller without (a full) server, as built in isolated tests
+        custom_provider_paths = getattr(getattr(self, "mass", None), "custom_provider_paths", None)
+        if not isinstance(custom_provider_paths, dict):
+            return
+        for domain, path in custom_provider_paths.items():
+            try:
+                strings = await asyncio.to_thread(load_provider_strings, path, domain)
+            except (OSError, ValueError) as err:
+                self.logger.warning("Ignoring strings.json of custom provider %s: %s", domain, err)
+                continue
+            for key, value in strings.items():
+                self._source.setdefault(key, value)
 
 
 def _discover_locale_files() -> dict[str, str]:
